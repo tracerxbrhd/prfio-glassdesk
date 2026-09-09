@@ -1,0 +1,8 @@
+.env
+.development-key
+*.sqlite3*
+*.log
+__pycache__
+staticfiles
+.ruff_cache
+
