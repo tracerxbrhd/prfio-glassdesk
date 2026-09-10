@@ -31,7 +31,7 @@ Deleting a ticket cascades to its messages. Removing a user clears message autho
 
 `add_message` accepts only an agent reply or internal note. It sets the author from the authenticated user, preventing a client from impersonating a customer or event source. The service locks the ticket row and sets the first-response timestamp only for the first public reply. Notes do not affect response time. PostgreSQL supplies the row-level concurrency guarantee; SQLite is a convenient local fallback with different locking behavior.
 
-Messages are persistent application records. There is no mail transport behind the reply action.
+Messages are persistent application records. There is no mail transport behind the reply action. The lifecycle rules are expanded in [TICKET_LIFECYCLE.md](TICKET_LIFECYCLE.md).
 
 ## Session contract
 
@@ -44,7 +44,7 @@ Messages are persistent application records. There is no mail transport behind t
 
 Unsafe requests must include `X-CSRFToken` and the session/CSRF cookies. The frontend keeps its token in memory and replaces it when a response returns a new one. The session cookie is `glassdesk_sessionid`; the CSRF cookie is `glassdesk_csrftoken`. Both use Secure mode in production; the session cookie is HttpOnly, SameSite Lax, and expires after eight hours.
 
-Failed logins are throttled after eight failures for the request IP in a five-minute window. The regular authenticated API rate defaults to `300/minute`. Debug mode uses local memory for cache state; production uses the database cache table created by container startup. Deployments should also enforce edge limits and review forwarded-address handling.
+Failed logins are throttled after eight failures for the request IP in a five-minute window. The regular authenticated API rate defaults to `300/minute`. Debug mode uses local memory for cache state; production uses the database cache table created by container startup. Deployments should also enforce edge limits and review forwarded-address handling. See [SECURITY.md](SECURITY.md) for the access model and deployment boundary.
 
 ## Resource endpoints
 
@@ -97,4 +97,4 @@ Feature pages live under `frontend/src/pages`. The workspace provider loads summ
 
 Compose runs PostgreSQL, Gunicorn/Django, and Nginx. Development exposes loopback HTTP on 8083. The production override mounts existing TLS files and exposes HTTPS on 443, sends a fixed trusted HTTPS scheme to Django, and disables debug/demo seeding. WhiteNoise serves collected Django static files. Database migrations and cache creation run at startup; larger deployments should move these into a coordinated release step.
 
-See [README setup](../README.md), [design](../DESIGN.md), and [verification limits](QA.md).
+See the [README](../README.md), [ticket lifecycle](TICKET_LIFECYCLE.md), and [security notes](SECURITY.md).

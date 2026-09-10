@@ -1,19 +1,47 @@
 # GlassDesk
 
-A shared support workspace that keeps the conversation, customer context, and next action together. Triage incoming questions, give each ticket an owner, keep internal notes alongside replies, and see how the team is responding.
+A shared customer-support workspace built around the lifecycle of a ticket: triage the request, assign an owner, keep replies and internal notes in one timeline, and measure how the team is responding.
 
 ![GlassDesk overview](docs/screenshots/dashboard-1440.png)
 
-## The workspace
+GlassDesk is a full-stack portfolio project using React and Django REST Framework. It is deliberately scoped as an **agent workspace** rather than a complete help-desk service: messages are persisted as conversation records, but no email transport or customer portal is connected.
 
-- **Shared inbox:** search by subject, customer, company, or ticket number; switch between all conversations, assigned work, and unassigned tickets; filter status, priority, and agent; sort by recent activity or urgency.
-- **Conversation history:** create and edit tickets, change assignments and tags, record replies and internal notes, and move work through open, waiting, resolved, and closed states. Status, priority, subject, and assignment changes appear in the timeline.
-- **Customer context:** find a customer's company, plan, and past tickets. Administrators can manage customer records; customers with existing tickets are protected from deletion.
-- **Support team:** administrators can create accounts, update roles, reset passwords, and deactivate agents. Active agents can work on tickets; permanent ticket deletion and customer/tag/account administration require staff access.
-- **Measured reporting:** unresolved and unassigned work, tickets received today, first response and resolution averages, seven-day conversation activity, and each agent's open workload. The main chart has a daily data-table alternative.
-- **Considered interactions:** translucent surfaces, an inset navigation rail, responsive ticket layouts, native form dialogs, visible focus states, reduced-motion support, and locally bundled Manrope typography.
+## Support workflow
 
-Replies and notes are stored in the database and remain after a reload. **Outbound email is not connected**; the reply composer states this explicitly. This release is an internal agent workspace, with customer conversations entered through tickets and the demo seed.
+A ticket connects a customer, an optional support agent, tags, priority, status, timestamps, and a persistent conversation.
+
+```text
+new request
+    │
+    ▼
+  open ──────────────┐
+    │                 │
+    ▼                 │
+ waiting              │ reopen
+    │                 │
+    ▼                 │
+ resolved ────────────┘
+    │
+    ▼
+ closed
+```
+
+Agents can add two kinds of conversation entries:
+
+- **Reply** — a public support response stored in the ticket timeline. The first reply establishes `first_response_at`.
+- **Internal note** — staff-only context that remains in the timeline but does not affect first-response metrics.
+
+Changes to status, priority, subject, and assignment are also recorded as timeline events. This makes the ticket conversation the history of the work rather than keeping important changes only in the current row state.
+
+For the detailed transition and timestamp rules, see [Ticket lifecycle](docs/TICKET_LIFECYCLE.md).
+
+## What is in the workspace
+
+- **Inbox** — search by ticket, subject, customer, or company; filter by ownership, status, priority, and agent.
+- **Conversation view** — replies, notes, generated events, ticket properties, customer context, and assignment in one screen.
+- **Customers** — company, plan, contact details, and previous tickets.
+- **Team** — agent accounts and access administration.
+- **Reporting** — unresolved and unassigned work, first-response and resolution averages, seven-day activity, and current agent workload.
 
 | Inbox | Ticket conversation |
 | --- | --- |
@@ -23,45 +51,86 @@ Replies and notes are stored in the database and remain after a reload. **Outbou
 | --- | --- |
 | ![Login](docs/screenshots/login-1440.png) | ![Analytics](docs/screenshots/analytics-1440.png) |
 
-[Mobile workspace](docs/screenshots/dashboard-360.png) · [Design decisions](DESIGN.md) · [Architecture and API](docs/ARCHITECTURE.md) · [QA evidence](docs/QA.md)
+## Ticket consistency
+
+The service layer owns the operations where a support timeline and the ticket row must remain consistent.
+
+`create_ticket` creates the ticket and its opening customer message in one database transaction. `update_ticket` records important property changes as event messages instead of silently replacing history.
+
+`add_message` derives the author from the authenticated session and only accepts agent replies or internal notes. A client cannot submit a forged customer/event message through this path.
+
+For a public reply, PostgreSQL locks the ticket row before checking `first_response_at`. Two agents replying concurrently therefore cannot independently establish different first-response timestamps. SQLite remains useful for local development, but PostgreSQL provides the intended row-lock semantics.
+
+## Access model
+
+GlassDesk has two workspace roles rather than the three-role project hierarchy used by a project-management system.
+
+| Capability | Administrator | Support agent |
+| --- | --- | --- |
+| Read shared tickets, customers, tags and reporting | Yes | Yes |
+| Create/edit/assign tickets | Yes | Yes |
+| Add replies and internal notes | Yes | Yes |
+| Delete tickets permanently | Yes | No |
+| Manage customers and tags | Yes | No |
+| Create, deactivate and update agent accounts | Yes | No |
+
+An active Django staff user or active member of the `support_agents` group can enter the workspace. Authorization is enforced by DRF permissions, independently of whether a control is visible in React.
+
+Sessions use the HttpOnly `glassdesk_sessionid` cookie and a separate `glassdesk_csrftoken`. Unsafe requests require CSRF protection; credentials are not stored in browser local storage. Production enables secure-cookie settings and uses a database-backed cache for shared throttling.
+
+More detail is in [Security and access](docs/SECURITY.md).
+
+## Reporting semantics
+
+The dashboard reports operational state derived from persisted tickets:
+
+- **Unresolved** — tickets currently `open` or `waiting`.
+- **Unassigned** — unresolved tickets without an agent.
+- **First response** — elapsed time from ticket creation to the first public agent reply. Notes do not count.
+- **Resolution** — elapsed time from creation to the stored completion timestamp.
+- **Agent workload** — current open/waiting ticket count per agent.
+
+These are elapsed-clock metrics with UTC reporting boundaries, not business-hours SLA calculations. The current dashboard is designed for the seeded small-team dataset and performs some aggregation in Python; a larger installation should move reporting aggregation into database queries or a reporting pipeline.
 
 ## Stack
 
-React 19, React Router, Vite, Motion for React, and custom CSS form the client. Django 5.2 and Django REST Framework provide session authentication, validation, permissions, and persistence. PostgreSQL 17 is used in Compose; SQLite is the default for native development. Gunicorn serves Django, WhiteNoise serves collected administration assets, and Nginx serves the built frontend and proxies API requests.
+**Frontend:** React 19, React Router, Vite, Motion, custom CSS.
 
-The backend separates models, serializers, permission policies, HTTP views, and transactional services. Ticket creation and its opening message are committed together. A row lock protects the first-response timestamp when replies arrive concurrently on PostgreSQL. The client refreshes its workspace state after successful mutations.
+**Backend:** Django 5.2, Django REST Framework, PostgreSQL 17 in Compose, SQLite for lightweight native development.
 
-## Run with Docker
+**Runtime:** Gunicorn, WhiteNoise and Nginx. The application uses same-origin API requests in the container deployment.
 
-Requires Docker Engine and Docker Compose v2. From the repository root:
+The backend separates models, serializers, permission policies, HTTP views, and transactional services. [Architecture and API](docs/ARCHITECTURE.md) documents the request flow, data model and endpoint contract.
+
+## Run locally
+
+### Docker
+
+Requires Docker Engine and Docker Compose v2:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-On PowerShell, use `Copy-Item .env.example .env` for the first command. Choose your local database password and a random `DJANGO_SECRET_KEY` in `.env`. Open [localhost:8083](http://localhost:8083).
+On PowerShell use `Copy-Item .env.example .env`. Choose a local PostgreSQL password and `DJANGO_SECRET_KEY` in `.env`, then open `http://localhost:8083`.
 
-Container startup applies migrations, creates the shared cache table, collects static files, and runs the demonstration seed when `SEED_DEMO=true`. The PostgreSQL volume preserves data across `docker compose down` and subsequent starts. Database and API ports stay on the Compose network; the demonstration frontend binds to loopback.
+Container startup applies migrations, creates the cache table, collects Django static assets and, when enabled, seeds the demonstration workspace.
 
-## Run natively
+### Native development
 
-Requires Python 3.12+ and Node.js 24 (the verified runtime). From the repository root:
+Requires Python 3.12+ and Node.js 24.
 
 ```bash
 python -m venv .venv
-```
-
-Activate with `source .venv/bin/activate` on macOS/Linux or `.venv\Scripts\Activate.ps1` on Windows, then:
-
-```bash
+# activate the virtual environment
 python -m pip install -r backend/requirements.txt
 python backend/manage.py migrate
 python backend/manage.py seed_demo
 python backend/manage.py runserver 127.0.0.1:8103
 ```
 
-In a second terminal:
+In another terminal:
 
 ```bash
 cd frontend
@@ -69,75 +138,24 @@ npm ci
 npm run dev
 ```
 
-Open [127.0.0.1:5105](http://127.0.0.1:5105). Vite proxies API requests to Django on port 8103. Native Django administration is available directly at [127.0.0.1:8103/admin/](http://127.0.0.1:8103/admin/). Use the same hostname consistently for the UI and API.
+Without `DATABASE_URL`, native development uses `backend/db.sqlite3`. The frontend runs on port 5105 and proxies API requests to Django on port 8103.
 
-Native settings read process environment variables; copying `.env` alone configures Compose, not the native Python process. Without `DATABASE_URL`, Django creates `backend/db.sqlite3`. Development generates a private ignored `backend/.development-key` if no key is supplied.
+## Demo workspace
 
-## Demo access
-
-The seed creates **42 tickets, nine customers, four agents, and five tags** in a new database, with example history dated relative to the seed run.
+A fresh seed contains **42 tickets, nine customers, four agents and five tags**, with history generated relative to the seed date.
 
 | Account | Email | Password |
 | --- | --- | --- |
-| Workspace administrator | `admin@example.com` | `demo-password` |
-| Support agent | `mia@example.com` | `demo-password` |
-| Support agent | `leo@example.com` | `demo-password` |
-| Support agent | `ava@example.com` | `demo-password` |
+| Administrator | `admin@example.com` | `demo-password` |
+| Agent | `mia@example.com` | `demo-password` |
+| Agent | `leo@example.com` | `demo-password` |
+| Agent | `ava@example.com` | `demo-password` |
 
-The administrator demo is also a Django superuser. These accounts are for local evaluation. `DEMO_PASSWORD` overrides the password of newly seeded users when supplied to the seed process. Repeated seeding preserves existing records and passwords and adds missing demo records. Seeding is blocked outside debug mode unless the explicit `ALLOW_DEMO_SEED=true` override is set; deployment should leave it disabled.
+These credentials are for local evaluation only. Demo seeding is blocked outside debug mode unless explicitly overridden, and the production Compose configuration disables it.
 
-## Access boundaries
+## Verification
 
-| Operation | Administrator | Support agent |
-| --- | --- | --- |
-| View tickets, customers, tags, team, and reporting | Yes | Yes |
-| Create/edit/assign tickets and change status or priority | Yes | Yes |
-| Add replies and internal notes | Yes | Yes |
-| Permanently delete tickets and their messages | Yes | No |
-| Create/edit/delete customers and tags | Yes | No |
-| Create/edit/deactivate team accounts and set passwords | Yes | No |
-
-An active staff user or member of the `support_agents` group can enter the workspace. Administrators cannot remove their own staff access or deactivate themselves through the team API; technical superuser access is managed separately in Django administration. This is one shared support team: agent membership grants access to the shared ticket history.
-
-Sessions use the HttpOnly `glassdesk_sessionid` cookie and the separate `glassdesk_csrftoken` CSRF cookie. These names let GlassDesk coexist with other local Django apps on the same hostname across different ports. The API helper uses the returned CSRF token; credentials are not kept in local storage. Sessions last eight hours, with Secure cookies enabled outside debug mode.
-
-## Configuration
-
-| Variable | Use |
-| --- | --- |
-| `DATABASE_URL` | Native database connection; defaults to SQLite. Compose constructs the PostgreSQL URL. |
-| `POSTGRES_PASSWORD` | Compose database password. Use a unique URL-safe value. |
-| `DJANGO_SECRET_KEY` | Required outside debug mode; use a new random value for each deployment. |
-| `DJANGO_DEBUG` | Native default `true`; production override forces `false`. |
-| `DJANGO_ALLOWED_HOSTS` | Comma-separated accepted hostnames. |
-| `CSRF_TRUSTED_ORIGINS` / `CORS_ALLOWED_ORIGINS` | Exact origins including scheme and port. |
-| `SEED_DEMO` | Container startup seed switch. Production override forces `false`. |
-| `API_USER_RATE` | Authenticated API throttle, default `300/minute`; CI uses a higher rate for repeated browser checks. |
-| `LOG_LEVEL` | Console logging level, default `INFO`. |
-| `PUBLIC_HOSTNAME` | Production HTTPS hostname, used by the Compose override. |
-| `TLS_CERT_FILE` / `TLS_KEY_FILE` | Existing absolute certificate-chain and private-key paths for production Nginx. |
-
-## Deploy with HTTPS
-
-The production override requires **Docker Compose 2.24.4+** and an existing valid TLS certificate. The configuration is provided for a dedicated host; GitHub Pages cannot run the Python service or database.
-
-1. Create `.env` with unique database credentials and a strong `DJANGO_SECRET_KEY`. For example, generate the key using `python -c "import secrets; print(secrets.token_urlsafe(64))"`.
-2. Set `DJANGO_DEBUG=false`, `SEED_DEMO=false`, `PUBLIC_HOSTNAME=support.your-domain.example`, and the absolute `TLS_CERT_FILE` and `TLS_KEY_FILE` paths. Point the hostname at the host and make TCP 443 reachable.
-3. Start the production configuration:
-
-```bash
-docker compose -f compose.yaml -f compose.production.yaml up -d --build
-docker compose -f compose.yaml -f compose.production.yaml exec backend python manage.py createsuperuser
-```
-
-4. Sign in over HTTPS and provision support agents from the team page. Use the same email for the first operator's username and email because workspace login authenticates by normalized email-as-username.
-5. Arrange certificate renewal, database backups and restore checks, uptime/error monitoring, and ingress request limits. The production setup uses a database-backed cache so throttle state is shared by Gunicorn workers. Review proxy settings before adding any extra ingress layer.
-
-The override exposes HTTPS on port 443, passes a fixed HTTPS scheme from Nginx to Django, disables demo seeding, and enables Django's secure-cookie/HTTPS settings. Container and TLS runtime were not exercised on the original verification machine because Docker Engine was unavailable; see [QA limitations](docs/QA.md).
-
-## Verify
-
-With the Python environment activated, from the root:
+Backend:
 
 ```bash
 ruff check backend
@@ -147,9 +165,10 @@ python backend/manage.py makemigrations --check --dry-run
 python backend/manage.py test support
 ```
 
-Frontend, from `frontend`:
+Frontend:
 
 ```bash
+cd frontend
 npm run lint
 npm run format:check
 npm run build
@@ -157,16 +176,35 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Browser tests need the seeded API at port 8103. Playwright starts or reuses the Vite server at port 5105. Use a dedicated demo database: the suite exercises real writes and cleans up its temporary records on success. `PLAYWRIGHT_EXECUTABLE_PATH` can select an existing Chromium binary. [QA evidence](docs/QA.md) distinguishes completed checks from configured CI and runtime limitations.
+The test suite covers authentication and permissions, ticket and conversation persistence, response/resolution timestamps, administration boundaries, reporting values, browser workflows, responsive layouts, keyboard interactions, and automated accessibility checks. CI additionally exercises the backend against PostgreSQL and builds the container images.
 
-Before starting the API for the rapid browser suite, set `API_USER_RATE=3000/minute` in that terminal (`$env:API_USER_RATE='3000/minute'` in PowerShell, or `export API_USER_RATE=3000/minute` in a POSIX shell). Normal application runs keep the default `300/minute`. See QA for a separate browser-test database configuration.
+## Deployment notes
 
-GitHub Actions is configured to run backend checks against PostgreSQL, then frontend lint/format/build and Chromium flows, with screenshot and failure-trace artifacts. Repository publication metadata is in [.github/repository.json](.github/repository.json).
+`compose.production.yaml` provides a dedicated-host configuration with HTTPS, secure Django settings, PostgreSQL, shared cache state, Gunicorn and Nginx. It expects existing TLS certificate files and production secrets; it does not provision DNS, certificates, backups, monitoring, or ingress policy.
 
-## Scope and next steps
+Before using it outside a review environment, create real staff accounts, disable demo seeding, arrange PostgreSQL backup/restore procedures, and configure operational monitoring and request limiting.
 
-This release supports a small shared team. Outbound/inbound email transport, customer self-service, file attachments, tenant isolation, real-time push updates, SLA business-hour calendars, and immutable compliance auditing are outside its scope. The UI follows API pagination but loads the complete workspace for local filtering; larger installations need server-driven views and reporting aggregation. Metric durations use elapsed clock time, including weekends, with UTC reporting boundaries.
+## Scope
 
-The fictional people, companies, ticket content, and demonstration metrics illustrate the workflows and do not claim customer relationships or production operating results.
+GlassDesk is intentionally a single shared support workspace. It does not currently implement:
 
-[Credits](CREDITS.md) · [MIT license](LICENSE)
+- inbound or outbound email transport;
+- a customer self-service portal;
+- attachments;
+- tenant isolation;
+- real-time push updates;
+- business-hours SLA calendars;
+- immutable compliance auditing.
+
+The UI follows API pagination but currently loads the workspace for local filtering. Server-driven filtering and database-side reporting would be the next scaling boundary.
+
+The people, companies, conversations and metrics in the seed are fictional demonstration data.
+
+## Documentation
+
+- [Ticket lifecycle](docs/TICKET_LIFECYCLE.md) — conversation types, transitions and response/resolution timestamps.
+- [Architecture and API](docs/ARCHITECTURE.md) — request flow, data model, endpoints and reporting definitions.
+- [Security and access](docs/SECURITY.md) — workspace membership, administrative boundaries, sessions, CSRF and throttling.
+- [Credits and licenses](CREDITS.md) — local typography, dependencies and asset provenance.
+
+MIT licensed.
