@@ -207,4 +207,6 @@ The people, companies, conversations and metrics in the seed are fictional demon
 - [Security and access](docs/SECURITY.md) — workspace membership, administrative boundaries, sessions, CSRF and throttling.
 - [Credits and licenses](CREDITS.md) — local typography, dependencies and asset provenance.
 
-MIT licensed.
+## License
+
+This repository is source-available for portfolio review and evaluation only. The original code and other original materials are **not open source** and may not be reused, redistributed, incorporated into other projects, or commercially exploited without prior written permission. See the [Portfolio Source License](LICENSE) for the complete terms. Third-party components remain subject to their respective licenses.
