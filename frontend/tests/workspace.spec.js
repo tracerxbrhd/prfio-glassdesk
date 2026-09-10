@@ -23,6 +23,9 @@ test('session persists, invalid credentials fail, and logout protects routes', a
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Your shared inbox.' })).toBeVisible();
   await page.getByRole('button', { name: 'Sign out', exact: true }).first().click();
+  // Wait for the logout request and UI transition before navigating away.
+  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  expect((await page.request.get('/api/auth/me/')).status()).toBe(401);
   await page.goto('/inbox/1');
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
